@@ -16,6 +16,7 @@ from keras.optimizers import Adam
 
 env = gym.make('CartPole-v1')
 
+# get size of state and action from environment
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
 
@@ -238,6 +239,8 @@ def main():
                 if done or ep_step % agent.target_update_cycle == 0:
                     # return# copy q_net --> target_net
                     agent.Copy_Weights()
+
+            agent.score = ep_step
 
             if done or ep_step == agent.ep_trial_step:
                 if agent.progress == "Training":
