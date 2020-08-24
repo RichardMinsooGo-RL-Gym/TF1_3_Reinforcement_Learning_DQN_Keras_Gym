@@ -111,7 +111,7 @@ class DQN:
 
     # pick samples randomly from replay memory (with batch_size)
     def train_model(self):
-        
+        # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
         states      = np.array([batch[0] for batch in minibatch])
@@ -247,6 +247,8 @@ def main():
                 if done or ep_step % agent.target_update_cycle == 0:
                     # return# copy q_net --> target_net
                     agent.Copy_Weights()
+
+            agent.score = ep_step
 
             if done or ep_step == agent.ep_trial_step:
                 if agent.progress == "Training":
