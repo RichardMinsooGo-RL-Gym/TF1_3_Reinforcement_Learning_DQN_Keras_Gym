@@ -244,6 +244,8 @@ def main():
                     # return# copy q_net --> target_net
                     agent.Copy_Weights()
 
+            agent.score = ep_step
+
             if done or ep_step == agent.ep_trial_step:
                 if agent.progress == "Training":
                     agent.episode += 1

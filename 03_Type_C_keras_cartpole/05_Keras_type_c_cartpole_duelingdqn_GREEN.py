@@ -262,6 +262,8 @@ def main():
                     # return# copy q_net --> target_net
                     agent.Copy_Weights()
 
+            agent.score = ep_step
+
             if done or ep_step == agent.ep_trial_step:
                 if agent.progress == "Training":
                     agent.episode += 1
@@ -276,7 +278,7 @@ def main():
     agent.save_model()
     
     pylab.plot(episodes, scores, 'b')
-    pylab.savefig("./save_graph/cartpole_Nature2015.png")
+    pylab.savefig("./save_graph/cartpole_duelingdqn.png")
 
     e = int(time.time() - start_time)
     print(' Elasped time :{:02d}:{:02d}:{:02d}'.format(e // 3600, (e % 3600 // 60), e % 60))
