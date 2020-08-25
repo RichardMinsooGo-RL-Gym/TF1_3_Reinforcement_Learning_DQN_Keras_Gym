@@ -1,13 +1,17 @@
-import sys
-import gym
-import pylab
 import random
+import pylab
 import numpy as np
-import os
 import time, datetime
 from collections import deque
-from keras.layers import Dense
+import gym
+import pylab
+import sys
+import pickle
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 from keras.models import Sequential
+from keras.layers import Dense
 from keras.optimizers import Adam
 
 # In case of CartPole-v1, maximum length of episode is 500
@@ -19,30 +23,28 @@ env = env.unwrapped
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
 
-file_name =  sys.argv[0][:-3]
+game_name =  sys.argv[0][:-3]
 
-model_path = "save_model/" + file_name
-graph_path = "save_graph/" + file_name
+model_path = "save_model/" + game_name
+graph_path = "save_graph/" + game_name
 
-if not os.path.isdir(model_path):
-    os.mkdir(model_path)
-
-if not os.path.isdir(graph_path):
-    os.mkdir(graph_path)
+# Make folder for save data
+if not os.path.exists(model_path):
+    os.makedirs(model_path)
+if not os.path.exists(graph_path):
+    os.makedirs(graph_path)
 
 # DQN Agent for the Cartpole
 # it uses Neural Network to approximate q function
 # and replay memory & target q network
 class DQN:
-    def __init__(self, state_size, action_size):
+    def __init__(self):
         # if you want to see Cartpole learning, then change to True
         self.render = False
-        self.load_model = False
-
         # get size of state and action
         self.progress = " "
-        self.action_size = action_size
         self.state_size = state_size
+        self.action_size = action_size
         
         # train time define
         self.training_time = 15*60
@@ -52,11 +54,16 @@ class DQN:
         self.discount_factor = 0.99
         
         self.epsilon_max = 1.0
-        self.epsilon_min = 0.001
-        self.epsilon_decay = 0.999
-        self.epsilon_rate = self.epsilon_max
+        # final value of epsilon
+        self.epsilon_min = 0.0001
+        self.epsilon_decay = 0.0005
+        self.epsilon = self.epsilon_max
         
-        self.hidden1, self.hidden2 = 24, 24
+        self.step = 0
+        self.score = 0
+        self.episode = 0
+        
+        self.hidden1, self.hidden2 = 64, 64
         
         self.ep_trial_step = 10000
         
@@ -69,9 +76,7 @@ class DQN:
 
         # create main model
         self.model = self.build_model()
-        if self.load_model:
-            self.model.load_weights(model_path + "/model.h5")
-
+        
     # approximate Q function using Neural Network
     # state is input and Q Value of each action is output of network
     def build_model(self):
@@ -80,27 +85,13 @@ class DQN:
         model.add(Dense(self.hidden1, input_dim=self.state_size, activation='relu', kernel_initializer='glorot_uniform'))
         model.add(Dense(self.hidden2, activation='relu', kernel_initializer='glorot_uniform'))
         model.add(Dense(self.action_size, activation='linear', kernel_initializer='glorot_uniform'))
-        
+        model.summary()
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
-    # get action from model using epsilon-greedy policy
-    def get_action(self, state):
-        #Exploration vs Exploitation
-        if np.random.rand() <= self.epsilon_rate:
-            return random.randrange(self.action_size)
-        else:
-            q_value = self.model.predict(state)
-            return np.argmax(q_value[0])
-
-    # save sample <s,a,r,s'> to the replay memory
-    def append_sample(self, state, action, reward, next_state, done):
-        #in every action put in the memory
-        self.memory.append((state, action, reward, next_state, done))
-    
     # pick samples randomly from replay memory (with batch_size)
     def train_model(self):
-        
+        # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
         states      = np.zeros((self.batch_size, self.state_size))
@@ -127,79 +118,129 @@ class DQN:
         # and do the model fit!
         self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
         
-        if self.epsilon_rate > self.epsilon_min:
-            self.epsilon_rate *= self.epsilon_decay
+        # Decrease epsilon while training
+        if self.epsilon > self.epsilon_min:
+            self.epsilon -= self.epsilon_decay
+        else :
+            self.epsilon = self.epsilon_min
+            
+    # get action from model using epsilon-greedy policy
+    def get_action(self, state):
+        # choose an action_arr epsilon greedily
+        action_arr = np.zeros(self.action_size)
+        action = 0
         
+        if random.random() < self.epsilon:
+            # print("----------Random action_arr----------")
+            action = random.randrange(self.action_size)
+            action_arr[action] = 1
+        else:
+            # Predict the reward value based on the given state
+            state = np.float32(state)
+            Q_value = self.model.predict(state)
+            action = np.argmax(Q_value[0])
+            action_arr[action] = 1
+            
+        return action_arr, action
+
+    # save sample <s,a,r,s'> to the replay memory
+    def append_sample(self, state, action, reward, next_state, done):
+        #in every action put in the memory
+        self.memory.append((state, action, reward, next_state, done))
+    
+    def save_model(self):
+        # Save the variables to disk.
+        self.model.save_weights(model_path+"/model.h5")
+        save_object = (self.epsilon, self.episode, self.step)
+        with open(model_path + '/epsilon_episode.pickle', 'wb') as ggg:
+            pickle.dump(save_object, ggg)
+
+        print("\n Model saved in file: %s" % model_path)
+
 def main():
     
-    # DQN 에이전트의 생성
-    agent = DQN(state_size, action_size)
+    agent = DQN()
     
-    last_n_game_reward = deque(maxlen=30)
-    last_n_game_reward.append(10000)
-    avg_ep_step = np.mean(last_n_game_reward)
-    
-    display_time = datetime.datetime.now()
-    print("\n\n Game start at :",display_time)
-    
-    start_time = time.time()
-    agent.episode = 0
-    time_step = 0
-    
-    while time.time() - start_time < agent.training_time and avg_ep_step > 200:
-        
-        done = False
-        ep_step = 0
-        state = env.reset()
-        state = np.reshape(state, [1, state_size])
+    # Initialize variables
+    # Load the file if the saved file exists
+    if os.path.isfile(model_path+"/model.h5"):
+        agent.model.load_weights(model_path+"/model.h5")
+        if os.path.isfile(model_path + '/epsilon_episode.pickle'):
+            
+            with open(model_path + '/epsilon_episode.pickle', 'rb') as ggg:
+                agent.epsilon, agent.episode, agent.step = pickle.load(ggg)
+            
+        print('\n\n Variables are restored!')
 
+    else:
+        print('\n\n Variables are initialized!')
+        agent.epsilon = agent.epsilon_max
+    
+    avg_score = 10000
+    episodes, scores = [], []
+    
+    # start training    
+    # Step 3.2: run the game
+    display_time = datetime.datetime.now()
+    print("\n\n",game_name, "-game start at :",display_time,"\n")
+    start_time = time.time()
+    
+    while time.time() - start_time < agent.training_time and avg_score > 200:
+
+        state = env.reset()
+        done = False
+        agent.score = 10000
+        ep_step = 0
+        state = np.reshape(state, [1, agent.state_size])
         while not done and ep_step < agent.ep_trial_step:
             if len(agent.memory) < agent.size_replay_memory:
-                agent.progress = "Exploration"
-            else :
+                agent.progress = "Exploration"            
+            else:
                 agent.progress = "Training"
 
             ep_step += 1
-            time_step += 1
+            agent.step += 1
             
             if agent.render:
                 env.render()
                 
-            action = agent.get_action(state)
+            action_arr, action = agent.get_action(state)
+            
+            # run the selected action and observe next state and reward
             next_state, reward, done, _ = env.step(action)
+            next_state = np.reshape(next_state, [1, agent.state_size])
             
-            """
-            #If the car pulls back on the left or right hill he gets a reward of +20
-            if next_state[1] > state[0][1] and next_state[1]>0 and state[0][1]>0:
-                reward = 20
-            elif next_state[1] < state[0][1] and next_state[1]<=0 and state[0][1]<=0:
-                reward = 20
-            #if he finishes with less than 200 steps
-            if done and ep_step < 200:
-                reward += 10000
-            else:
-                reward += -25
-            """
-            next_state = np.reshape(next_state, [1, state_size])
+            # store the transition in memory
             agent.append_sample(state, action, reward, next_state, done)
-            state = next_state
             
+            # update the old values
+            state = next_state
+            # only train if done observing
             if agent.progress == "Training":
+                # Training!
                 agent.train_model()
+                    
+            agent.score = ep_step
 
             if done or ep_step == agent.ep_trial_step:
                 if agent.progress == "Training":
                     agent.episode += 1
-                    last_n_game_reward.append(ep_step)
-                    avg_ep_step = np.mean(last_n_game_reward)
-                print("episode :{:>5d} / ep_step :{:>5d} / last 20 game avg :{:>4.1f}".format(agent.episode, ep_step, avg_ep_step))
+                    scores.append(agent.score)
+                    episodes.append(agent.episode)
+                    avg_score = np.mean(scores[-min(30, len(scores)):])
+                print('episode :{:>6,d}'.format(agent.episode),'/ ep step :{:>5,d}'.format(ep_step), \
+                      '/ time step :{:>8,d}'.format(agent.step),'/ status :', agent.progress, \
+                      '/ epsilon :{:>1.4f}'.format(agent.epsilon),'/ score :{:> 4f}'.format(agent.score) )
                 break
-                
-    agent.model.save_weights(model_path + "/model.h5")
+    # Save model
+    agent.save_model()
     
+    pylab.plot(episodes, scores, 'b')
+    pylab.savefig("./save_graph/mountaincar_NIPS2013.png")
+
     e = int(time.time() - start_time)
     print(' Elasped time :{:02d}:{:02d}:{:02d}'.format(e // 3600, (e % 3600 // 60), e % 60))
     sys.exit()
-                    
+
 if __name__ == "__main__":
     main()
