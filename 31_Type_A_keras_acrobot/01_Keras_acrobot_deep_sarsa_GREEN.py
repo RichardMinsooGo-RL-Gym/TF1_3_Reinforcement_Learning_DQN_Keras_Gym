@@ -2,7 +2,6 @@ import random
 import pylab
 import numpy as np
 import time, datetime
-from collections import deque
 import gym
 import pylab
 import sys
@@ -36,15 +35,13 @@ if not os.path.exists(model_path):
 if not os.path.exists(graph_path):
     os.makedirs(graph_path)
 
-# DQN Agent for the Cartpole
-# it uses Neural Network to approximate q function
-# and replay memory & target q network
-class DQN:
+# this is DeepSARSA Agent for the Cartpole
+# Utilize Neural Network as q function approximator
+class DeepSARSAgent:
     def __init__(self):
         # if you want to see Cartpole learning, then change to True
         self.render = False
         # get size of state and action
-        self.progress = " "
         self.state_size = state_size
         self.action_size = action_size
         
@@ -69,13 +66,6 @@ class DQN:
         
         self.ep_trial_step = 10000
         
-        # Parameter for Experience Replay
-        self.size_replay_memory = 50000
-        self.batch_size = 64
-        
-        # Experience Replay 
-        self.memory = deque(maxlen=self.size_replay_memory)
-
         # create main model
         self.model = self.build_model()
         
@@ -91,34 +81,23 @@ class DQN:
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
-    # pick samples randomly from replay memory (with batch_size)
-    def train_model(self):
-        # sample a minibatch to train on
-        minibatch = random.sample(self.memory, self.batch_size)
-
-        states      = np.zeros((self.batch_size, self.state_size))
-        next_states = np.zeros((self.batch_size, self.state_size))
-        actions, rewards, dones = [], [], []
-
-        for i in range(self.batch_size):
-            states[i]      = minibatch[i][0]
-            actions.append(  minibatch[i][1])
-            rewards.append(  minibatch[i][2])
-            next_states[i] = minibatch[i][3]
-            dones.append(    minibatch[i][4])
-
-        q_value          = self.model.predict(states)
-        q_value_next = self.model.predict(next_states)
+    # For Q-net or sarsa there is only one batch
+    def train_model(self, state, action, reward, next_state, next_action, done):
+        state = np.float32(state)
+        next_state = np.float32(next_state)
+        target = self.model.predict(state)[0]
         
-        for i in range(self.batch_size):
-            # Q Learning: get maximum Q value at s' from target model
-            if dones[i]:
-                q_value[i][actions[i]] = rewards[i]
-            else:
-                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (np.amax(q_value_next[i]))
-                
+        # like Q Learning, get maximum Q value at s'
+        # But from target model
+        if done:
+            target[action] = reward
+        else:
+            target[action] = (reward + self.discount_factor * self.model.predict(next_state)[0][next_action])
+
+        target = np.reshape(target, [1, self.action_size])
+        # make minibatch which includes target q value and predicted q value
         # and do the model fit!
-        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
+        self.model.fit(state, target, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
@@ -145,11 +124,6 @@ class DQN:
             
         return action_arr, action
 
-    # save sample <s,a,r,s'> to the replay memory
-    def append_sample(self, state, action, reward, next_state, done):
-        #in every action put in the memory
-        self.memory.append((state, action, reward, next_state, done))
-    
     def save_model(self):
         # Save the variables to disk.
         self.model.save_weights(model_path+"/model.h5")
@@ -161,7 +135,7 @@ class DQN:
 
 def main():
     
-    agent = DQN()
+    agent = DeepSARSAgent()
     
     # Initialize variables
     # Load the file if the saved file exists
@@ -195,10 +169,7 @@ def main():
         ep_step = 0
         state = np.reshape(state, [1, agent.state_size])
         while not done and ep_step < agent.ep_trial_step:
-            if len(agent.memory) < agent.size_replay_memory:
-                agent.progress = "Exploration"            
-            else:
-                agent.progress = "Training"
+            # fresh env
 
             ep_step += 1
             agent.step += 1
@@ -212,33 +183,29 @@ def main():
             next_state, reward, done, _ = env.step(action)
             next_state = np.reshape(next_state, [1, agent.state_size])
             
-            # store the transition in memory
-            agent.append_sample(state, action, reward, next_state, done)
+            next_action_arr, next_action = agent.get_action(next_state)
+            agent.train_model(state, action, reward, next_state, next_action, done)
             
             # update the old values
             state = next_state
-            # only train if done observing
-            if agent.progress == "Training":
-                # Training!
-                agent.train_model()
                     
             agent.score = ep_step
 
             if done or ep_step == agent.ep_trial_step:
-                if agent.progress == "Training":
-                    agent.episode += 1
-                    scores.append(agent.score)
-                    episodes.append(agent.episode)
-                    avg_score = np.mean(scores[-min(30, len(scores)):])
+                agent.episode += 1
+
+                scores.append(agent.score)
+                episodes.append(agent.episode)
+                avg_score = np.mean(scores[-min(30, len(scores)):])
                 print('episode :{:>6,d}'.format(agent.episode),'/ ep step :{:>5,d}'.format(ep_step), \
-                      '/ time step :{:>8,d}'.format(agent.step),'/ status :', agent.progress, \
+                      '/ time step :{:>8,d}'.format(agent.step), \
                       '/ epsilon :{:>1.4f}'.format(agent.epsilon),'/ last 30 avg :{:> 4.1f}'.format(avg_score) )
                 break
     # Save model
     agent.save_model()
     
     pylab.plot(episodes, scores, 'b')
-    pylab.savefig("./save_graph/acrobot_NIPS2013.png")
+    pylab.savefig("./save_graph/acrobot_deep_sarsa.png")
 
     e = int(time.time() - start_time)
     print(' Elasped time :{:02d}:{:02d}:{:02d}'.format(e // 3600, (e % 3600 // 60), e % 60))
