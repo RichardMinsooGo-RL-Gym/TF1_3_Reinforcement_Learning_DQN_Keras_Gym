@@ -2,17 +2,15 @@ import random
 import pylab
 import numpy as np
 import time, datetime
-from collections import deque
 import gym
 import pylab
 import sys
 import pickle
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-from keras.layers import *
-from keras.models import Sequential,Model
-import keras
-from keras import backend as K_back
+
+from keras.models import Sequential
+from keras.layers import Dense
 from keras.optimizers import Adam
 
 # In case of CartPole-v1, maximum length of episode is 500
@@ -35,15 +33,13 @@ if not os.path.exists(model_path):
 if not os.path.exists(graph_path):
     os.makedirs(graph_path)
 
-# DQN Agent for the Cartpole
-# it uses Neural Network to approximate q function
-# and replay memory & target q network
-class DQN:
+# this is DeepSARSA Agent for the Cartpole
+# Utilize Neural Network as q function approximator
+class DeepSARSAgent:
     def __init__(self):
         # if you want to see Cartpole learning, then change to True
         self.render = False
         # get size of state and action
-        self.progress = " "
         self.state_size = state_size
         self.action_size = action_size
         
@@ -68,74 +64,38 @@ class DQN:
         
         self.ep_trial_step = 10000
         
-        # Parameter for Experience Replay
-        self.size_replay_memory = 50000
-        self.batch_size = 64
-        
-        # Experience Replay 
-        self.memory = deque(maxlen=self.size_replay_memory)
-        
-        # Parameter for Target Network
-        self.target_update_cycle = 200
-
-        # create main model and target model
+        # create main model
         self.model = self.build_model()
-        self.target_model = self.build_model()
         
     # approximate Q function using Neural Network
     # state is input and Q Value of each action is output of network
     def build_model(self):
-        
-        state = Input(shape=(self.state_size,))
-        x = Dense(units=32,activation='relu',kernel_initializer='he_uniform',name='hidden_layer_1')(state)
-        x = Dense(units=32,activation='relu',kernel_initializer='he_uniform',name='hidden_layer_2')(x)
-        value_= Dense(units=1,activation='linear',kernel_initializer='he_uniform',name='Value_func')(x)
-        ac_activation = Dense(units=self.action_size,activation='linear',kernel_initializer='he_uniform',name='action')(x)
-        
-        #Compute average of advantage function
-        avg_ac_activation = Lambda(lambda x: K_back.mean(x,axis=1,keepdims=True))(ac_activation)
-        
-        #Concatenate value function to add it to the advantage function
-        concat_value = Concatenate(axis=-1,name='concat_0')([value_,value_])
-        concat_avg_ac = Concatenate(axis=-1,name='concat_ac_{}'.format(0))([avg_ac_activation,avg_ac_activation])
 
-        for i in range(1,self.action_size-1):
-            concat_value = Concatenate(axis=-1,name='concat_{}'.format(i))([concat_value,value_])
-            concat_avg_ac = Concatenate(axis=-1,name='concat_ac_{}'.format(i))([concat_avg_ac,avg_ac_activation])
-
-        #Subtract concatenated average advantage tensor with original advantage function
-        ac_activation = Subtract()([ac_activation,concat_avg_ac])
-        
-        #Add the two (Value Function and modified advantage function)
-        merged_layers = Add(name='final_layer')([concat_value,ac_activation])
-        model = Model(inputs = state,outputs=merged_layers)
+        model = Sequential()
+        model.add(Dense(self.hidden1, input_dim=self.state_size, activation='relu', kernel_initializer='glorot_uniform'))
+        model.add(Dense(self.hidden2, activation='relu', kernel_initializer='glorot_uniform'))
+        model.add(Dense(self.action_size, activation='linear', kernel_initializer='glorot_uniform'))
         model.summary()
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
-    # pick samples randomly from replay memory (with batch_size)
-    def train_model(self):
-        # sample a minibatch to train on
-        minibatch = random.sample(self.memory, self.batch_size)
-
-        states      = np.array([batch[0] for batch in minibatch])
-        actions     = np.array([batch[1] for batch in minibatch])
-        rewards     = np.array([batch[2] for batch in minibatch])
-        next_states = np.array([batch[3] for batch in minibatch])
-        dones       = np.array([batch[4] for batch in minibatch])
-
-        states = np.squeeze(states)
-        next_states = np.squeeze(next_states)
-
-        q_value          = self.model.predict_on_batch(states)
-        tgt_q_value_next = self.target_model.predict_on_batch(next_states)
+    # For Q-net or sarsa there is only one batch
+    def train_model(self, state, action, reward, next_state, next_action, done):
+        state = np.float32(state)
+        next_state = np.float32(next_state)
+        target = self.model.predict(state)[0]
         
-        q_update = rewards + self.discount_factor*(np.amax(tgt_q_value_next, axis=1))*(1-dones)
-        
-        ind = np.array([x for x in range(self.batch_size)])
-        q_value[[ind], [actions]] = q_update
+        # like Q Learning, get maximum Q value at s'
+        # But from target model
+        if done:
+            target[action] = reward
+        else:
+            target[action] = (reward + self.discount_factor * self.model.predict(next_state)[0][next_action])
 
-        self.model.fit(states, q_value, epochs=1, verbose=0)
+        target = np.reshape(target, [1, self.action_size])
+        # make minibatch which includes target q value and predicted q value
+        # and do the model fit!
+        self.model.fit(state, target, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
@@ -162,15 +122,6 @@ class DQN:
             
         return action_arr, action
 
-    # save sample <s,a,r,s'> to the replay memory
-    def append_sample(self, state, action, reward, next_state, done):
-        #in every action put in the memory
-        self.memory.append((state, action, reward, next_state, done))
-    
-    # after some time interval update the target model to be same with model
-    def Copy_Weights(self):
-        self.target_model.set_weights(self.model.get_weights())
-
     def save_model(self):
         # Save the variables to disk.
         self.model.save_weights(model_path+"/model.h5")
@@ -182,7 +133,7 @@ class DQN:
 
 def main():
     
-    agent = DQN()
+    agent = DeepSARSAgent()
     
     # Initialize variables
     # Load the file if the saved file exists
@@ -208,21 +159,15 @@ def main():
     print("\n\n",game_name, "-game start at :",display_time,"\n")
     start_time = time.time()
     
-    # initialize target model
-    agent.Copy_Weights()
-
     while time.time() - start_time < agent.training_time and avg_score > 200:
 
         state = env.reset()
         done = False
-        agent.score = 0
+        agent.score = 10000
         ep_step = 0
         state = np.reshape(state, [1, agent.state_size])
         while not done and ep_step < agent.ep_trial_step:
-            if len(agent.memory) < agent.size_replay_memory:
-                agent.progress = "Exploration"            
-            else:
-                agent.progress = "Training"
+            # fresh env
 
             ep_step += 1
             agent.step += 1
@@ -236,37 +181,29 @@ def main():
             next_state, reward, done, _ = env.step(action)
             next_state = np.reshape(next_state, [1, agent.state_size])
             
-            # store the transition in memory
-            agent.append_sample(state, action, reward, next_state, done)
+            next_action_arr, next_action = agent.get_action(next_state)
+            agent.train_model(state, action, reward, next_state, next_action, done)
             
             # update the old values
             state = next_state
-            # only train if done observing
-            if agent.progress == "Training":
-                # Training!
-                agent.train_model()
-                # if done or ep_step % agent.target_update_cycle == 0:
-                if done or ep_step % agent.target_update_cycle == 0:
-                    # return# copy q_net --> target_net
-                    agent.Copy_Weights()
-
+                    
             agent.score = ep_step
 
             if done or ep_step == agent.ep_trial_step:
-                if agent.progress == "Training":
-                    agent.episode += 1
-                    scores.append(agent.score)
-                    episodes.append(agent.episode)
-                    avg_score = np.mean(scores[-min(30, len(scores)):])
+                agent.episode += 1
+
+                scores.append(agent.score)
+                episodes.append(agent.episode)
+                avg_score = np.mean(scores[-min(30, len(scores)):])
                 print('episode :{:>6,d}'.format(agent.episode),'/ ep step :{:>5,d}'.format(ep_step), \
-                      '/ time step :{:>8,d}'.format(agent.step),'/ status :', agent.progress, \
+                      '/ time step :{:>8,d}'.format(agent.step), \
                       '/ epsilon :{:>1.4f}'.format(agent.epsilon),'/ score :{:> 4f}'.format(agent.score) )
                 break
     # Save model
     agent.save_model()
     
     pylab.plot(episodes, scores, 'b')
-    pylab.savefig("./save_graph/mountaincar_duelingdqn.png")
+    pylab.savefig("./save_graph/mountaincar_deep_sarsa.png")
 
     e = int(time.time() - start_time)
     print(' Elasped time :{:02d}:{:02d}:{:02d}'.format(e // 3600, (e % 3600 // 60), e % 60))
