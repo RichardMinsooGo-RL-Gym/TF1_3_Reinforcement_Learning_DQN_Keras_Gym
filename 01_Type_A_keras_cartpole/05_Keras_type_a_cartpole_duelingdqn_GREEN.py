@@ -9,14 +9,15 @@ import sys
 import pickle
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-import keras
-from keras import backend as K_back
 from keras.layers import *
 from keras.models import Sequential,Model
+import keras
+from keras import backend as K_back
 from keras.optimizers import Adam
 
 env = gym.make('CartPole-v1')
 
+# get size of state and action from environment
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
 
@@ -46,7 +47,7 @@ class DQN:
         # train time define
         self.training_time = 5*60
         
-        # these are hyper parameters for the Dueling DQN
+        # These are hyper parameters for the DQN
         self.learning_rate = 0.001
         self.discount_factor = 0.99
         
@@ -114,29 +115,24 @@ class DQN:
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
-        states      = np.zeros((self.batch_size, self.state_size))
-        next_states = np.zeros((self.batch_size, self.state_size))
-        actions, rewards, dones = [], [], []
+        states      = np.array([batch[0] for batch in minibatch])
+        actions     = np.array([batch[1] for batch in minibatch])
+        rewards     = np.array([batch[2] for batch in minibatch])
+        next_states = np.array([batch[3] for batch in minibatch])
+        dones       = np.array([batch[4] for batch in minibatch])
 
-        for i in range(self.batch_size):
-            states[i]      = minibatch[i][0]
-            actions.append(  minibatch[i][1])
-            rewards.append(  minibatch[i][2])
-            next_states[i] = minibatch[i][3]
-            dones.append(    minibatch[i][4])
+        states = np.squeeze(states)
+        next_states = np.squeeze(next_states)
 
-        q_value          = self.model.predict(states)
-        tgt_q_value_next = self.target_model.predict(next_states)
+        q_value          = self.model.predict_on_batch(states)
+        tgt_q_value_next = self.target_model.predict_on_batch(next_states)
         
-        for i in range(self.batch_size):
-            # Q Learning: get maximum Q value at s' from target model
-            if dones[i]:
-                q_value[i][actions[i]] = rewards[i]
-            else:
-                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (np.amax(tgt_q_value_next[i]))
-                
-        # and do the model fit!
-        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
+        q_update = rewards + self.discount_factor*(np.amax(tgt_q_value_next, axis=1))*(1-dones)
+        
+        ind = np.array([x for x in range(self.batch_size)])
+        q_value[[ind], [actions]] = q_update
+
+        self.model.fit(states, q_value, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:

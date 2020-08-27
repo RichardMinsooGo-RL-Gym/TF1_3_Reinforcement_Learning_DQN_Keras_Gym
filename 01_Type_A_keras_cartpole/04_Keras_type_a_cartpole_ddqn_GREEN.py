@@ -34,7 +34,7 @@ if not os.path.exists(graph_path):
 # DQN Agent for the Cartpole
 # it uses Neural Network to approximate q function
 # and replay memory & target q network
-class DoubleDQNAgent:
+class DQN:
     def __init__(self):
         # if you want to see Cartpole learning, then change to True
         self.render = False
@@ -46,7 +46,7 @@ class DoubleDQNAgent:
         # train time define
         self.training_time = 5*60
         
-        # these are hyper parameters for the Double DQN
+        # these is hyper parameters for the Double DQN
         self.learning_rate = 0.001
         self.discount_factor = 0.99
         
@@ -95,35 +95,27 @@ class DoubleDQNAgent:
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
-        states      = np.zeros((self.batch_size, self.state_size))
-        next_states = np.zeros((self.batch_size, self.state_size))
-        actions, rewards, dones = [], [], []
+        states      = np.array([batch[0] for batch in minibatch])
+        actions     = np.array([batch[1] for batch in minibatch])
+        rewards     = np.array([batch[2] for batch in minibatch])
+        next_states = np.array([batch[3] for batch in minibatch])
+        dones       = np.array([batch[4] for batch in minibatch])
 
-        for i in range(self.batch_size):
-            states[i]      = minibatch[i][0]
-            actions.append(  minibatch[i][1])
-            rewards.append(  minibatch[i][2])
-            next_states[i] = minibatch[i][3]
-            dones.append(    minibatch[i][4])
+        states = np.squeeze(states)
+        next_states = np.squeeze(next_states)
 
-        q_value          = self.model.predict(states)
-        q_value_next     = self.model.predict(next_states)
-        tgt_q_value_next = self.target_model.predict(next_states)
+        q_value          = self.model.predict_on_batch(states)
+        q_value_next = self.model.predict_on_batch(next_states)
+        tgt_q_value_next = self.target_model.predict_on_batch(next_states)
         
         for i in range(self.batch_size):
-            # Q Learning: get maximum Q value at s' from target model
             if dones[i]:
                 q_value[i][actions[i]] = rewards[i]
             else:
-                # the key point of Double DQN
-                # selection of action is from model
-                # update is from target model
-                a = np.argmax(q_value_next[i])
-                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (tgt_q_value_next[i][a])
-
-        # make minibatch which includes target q value and predicted q value
-        # and do the model fit!
-        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
+                a_max = np.argmax(tgt_q_value_next[i])
+                q_value[i][actions[i]] = rewards[i] + self.discount_factor * q_value_next[i][a_max]
+            
+        self.model.fit(states, q_value, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
@@ -170,7 +162,7 @@ class DoubleDQNAgent:
 
 def main():
     
-    agent = DoubleDQNAgent()
+    agent = DQN()
     
     # Initialize variables
     # Load the file if the saved file exists
