@@ -201,7 +201,7 @@ def main():
     agent.save_model()
     
     pylab.plot(episodes, scores, 'b')
-    pylab.savefig("./save_graph/cartple_deep_sarsa.png")
+    pylab.savefig("./save_graph/gridworld_deep_sarsa.png")
 
     e = int(time.time() - start_time)
     print(' Elasped time :{:02d}:{:02d}:{:02d}'.format(e // 3600, (e % 3600 // 60), e % 60))

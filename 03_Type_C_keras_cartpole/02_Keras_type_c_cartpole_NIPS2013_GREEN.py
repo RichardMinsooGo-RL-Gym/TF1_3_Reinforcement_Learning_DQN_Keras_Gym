@@ -16,6 +16,7 @@ from keras.optimizers import Adam
 
 env = gym.make('CartPole-v1')
 
+# get size of state and action from environment
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
 
@@ -85,43 +86,34 @@ class DQN:
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
-    def get_target_q_value(self, next_state, reward):
-        
-        # max Q value among next state's actions
-        # DQN chooses the max Q value among next actions
-        # selection and evaluation of action is 
-        # on the target Q Network
-        # Q_max = max_a' Q_target(s', a')
-        q_value = np.amax(self.model.predict(next_state)[0])
-
-        # Q_max = reward + discount_factor * Q_max
-        q_value *= self.discount_factor
-        q_value += reward
-        return q_value
-
+    # pick samples randomly from replay memory (with batch_size)
     def train_model(self):
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
-        states, q_values_batch = [], []
 
-        # fixme: for speedup, this could be done on the tensor level
-        # but easier to understand using a loop
-        for state, action, reward, next_state, done in minibatch:
-            # policy prediction for a given state
-            q_values = self.model.predict(state)
-            
-            # get Q_max
-            q_value = self.get_target_q_value(next_state, reward)
+        states      = np.zeros((self.batch_size, self.state_size))
+        next_states = np.zeros((self.batch_size, self.state_size))
+        actions, rewards, dones = [], [], []
 
-            # correction on the Q value for the action used
-            q_values[0][action] = reward if done else q_value
+        for i in range(self.batch_size):
+            states[i]      = minibatch[i][0]
+            actions.append(  minibatch[i][1])
+            rewards.append(  minibatch[i][2])
+            next_states[i] = minibatch[i][3]
+            dones.append(    minibatch[i][4])
 
-            # collect batch state-q_value mapping
-            states.append(state[0])
-            q_values_batch.append(q_values[0])
-
-        # train the Q-network
-        self.model.fit(np.array(states), np.array(q_values_batch), batch_size=self.batch_size, epochs=1,verbose=0)
+        q_value          = self.model.predict(states)
+        q_value_next = self.model.predict(next_states)
+        
+        for i in range(self.batch_size):
+            # Q Learning: get maximum Q value at s' from target model
+            if dones[i]:
+                q_value[i][actions[i]] = rewards[i]
+            else:
+                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (np.amax(q_value_next[i]))
+                
+        # and do the model fit!
+        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
