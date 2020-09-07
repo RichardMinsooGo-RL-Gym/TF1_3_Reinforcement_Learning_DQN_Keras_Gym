@@ -1,5 +1,4 @@
 import random
-import pylab
 import numpy as np
 import time, datetime
 from collections import deque
@@ -93,44 +92,42 @@ class DoubleDQNAgent:
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
-    def get_target_q_value(self, next_state, reward):
-        # max Q value among next state's actions
-        # DDQN
-        # current Q Network selects the action
-        # a'_max = argmax_a' Q(s', a')
-        action = np.argmax(self.model.predict(next_state)[0])
-        # target Q Network evaluates the action
-        # Q_max = Q_target(s', a'_max)
-        q_value = self.target_model.predict(next_state)[0][action]
-
-        # Q_max = reward + discount_factor * Q_max
-        q_value *= self.discount_factor
-        q_value += reward
-        return q_value
-
+    # pick samples randomly from replay memory (with batch_size)
     def train_model(self):
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
-        states, q_values_batch = [], []
 
-        # fixme: for speedup, this could be done on the tensor level
-        # but easier to understand using a loop
-        for state, action, reward, next_state, done in minibatch:
-            # policy prediction for a given state
-            q_values = self.model.predict(state)
-            
-            # get Q_max
-            q_value = self.get_target_q_value(next_state, reward)
+        #Now we do the experience replay
+        states      = np.zeros((self.batch_size, self.state_size))
+        next_states = np.zeros((self.batch_size, self.state_size))
+        actions, rewards, dones = [], [], []
 
-            # correction on the Q value for the action used
-            q_values[0][action] = reward if done else q_value
+        for i in range(self.batch_size):
+            states[i]      = minibatch[i][0]
+            actions.append(  minibatch[i][1])
+            rewards.append(  minibatch[i][2])
+            next_states[i] = minibatch[i][3]
+            dones.append(    minibatch[i][4])
 
-            # collect batch state-q_value mapping
-            states.append(state[0])
-            q_values_batch.append(q_values[0])
+        q_value          = self.model.predict(states)
+        q_value_next     = self.model.predict(next_states)
+        tgt_q_value_next = self.target_model.predict(next_states)
 
-        # train the Q-network
-        self.model.fit(np.array(states), np.array(q_values_batch), batch_size=self.batch_size, epochs=1,verbose=0)
+        for i in range(self.batch_size):
+            # like Q Learning, get maximum Q value at s'
+            # But from target model
+            if dones[i]:
+                q_value[i][actions[i]] = rewards[i]
+            else:
+                # the key point of Double DQN
+                # selection of action is from model
+                # update is from target model
+                a = np.argmax(q_value_next[i])
+                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (tgt_q_value_next[i][a])
+
+        # make minibatch which includes target q value and predicted q value
+        # and do the model fit!
+        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
@@ -165,6 +162,8 @@ class DoubleDQNAgent:
     # after some time interval update the target model to be same with model
     def Copy_Weights(self):
         self.target_model.set_weights(self.model.get_weights())
+            
+        # print(" Weights are copied!!")
 
     def save_model(self):
         # Save the variables to disk.
@@ -227,8 +226,9 @@ def main():
                 
             action_arr, action = agent.get_action(state)
             
-            f_action = (action-(action_size-1)/2)/((action_size-1)/4)
+            f_action = (action-(action_size-1)/2)/((action_size-1)/2)
             next_state, reward, done, _ = env.step(np.array([f_action]))
+            
             next_state = np.reshape(next_state, [1, agent.state_size])
             
             # store the transition in memory
@@ -240,7 +240,6 @@ def main():
             if agent.progress == "Training":
                 # Training!
                 agent.train_model()
-                # if done
                 if done or ep_step % agent.target_update_cycle == 0:
                     # return# copy q_net --> target_net
                     agent.Copy_Weights()
@@ -254,7 +253,7 @@ def main():
                     episodes.append(agent.episode)
                     avg_score = np.mean(scores[-min(30, len(scores)):])
                 print('episode :{:>6,d}'.format(agent.episode),'/ ep step :{:>5,d}'.format(ep_step), \
-                      '/ time step :{:>8,d}'.format(agent.step),'/ status :', agent.progress, \
+                      '/ time step :{:>7,d}'.format(agent.step),'/ status :', agent.progress, \
                       '/ epsilon :{:>1.4f}'.format(agent.epsilon),'/ last 30 avg :{:> 4.1f}'.format(avg_score) )
                 break
     # Save model
