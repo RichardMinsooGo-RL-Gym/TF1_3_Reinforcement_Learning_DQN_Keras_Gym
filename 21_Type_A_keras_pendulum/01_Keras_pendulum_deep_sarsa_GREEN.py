@@ -1,5 +1,4 @@
 import random
-import pylab
 import numpy as np
 import time, datetime
 import gym
@@ -93,9 +92,6 @@ class DeepSARSAgent:
             target[action] = (reward + self.discount_factor * self.model.predict(next_state)[0][next_action])
 
         target = np.reshape(target, [1, self.action_size])
-        # make minibatch which includes target q value and predicted q value
-        # and do the model fit!
-        self.model.fit(state, target, epochs=1, verbose=0)
         
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
@@ -103,6 +99,10 @@ class DeepSARSAgent:
         else :
             self.epsilon = self.epsilon_min
             
+        # make minibatch which includes target q value and predicted q value
+        # and do the model fit!
+        self.model.fit(state, target, epochs=1, verbose=0)
+        
     # get action from model using epsilon-greedy policy
     def get_action(self, state):
         # choose an action_arr epsilon greedily
