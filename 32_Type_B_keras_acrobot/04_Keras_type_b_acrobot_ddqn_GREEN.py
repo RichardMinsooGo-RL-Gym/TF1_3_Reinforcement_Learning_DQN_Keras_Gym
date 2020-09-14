@@ -1,5 +1,4 @@
 import random
-import pylab
 import numpy as np
 import time, datetime
 from collections import deque
@@ -100,38 +99,37 @@ class DoubleDQNAgent:
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
-        states      = np.array([batch[0] for batch in minibatch])
-        actions     = np.array([batch[1] for batch in minibatch])
-        rewards     = np.array([batch[2] for batch in minibatch])
-        next_states = np.array([batch[3] for batch in minibatch])
-        dones       = np.array([batch[4] for batch in minibatch])
+        #Now we do the experience replay
+        states, actions, rewards, next_states, dones = zip(*minibatch)
+        states      = np.concatenate(states)
+        next_states = np.concatenate(next_states)
 
-        states = np.squeeze(states)
-        next_states = np.squeeze(next_states)
+        q_value      = self.model.predict(states)
+        q_value_next     = self.model.predict(next_states)
+        tgt_q_value_next = self.target_model.predict(next_states)
 
-        q_value          = self.model.predict_on_batch(states)
-        q_value_next = self.model.predict_on_batch(next_states)
-        tgt_q_value_next = self.target_model.predict_on_batch(next_states)
-        
         for i in range(self.batch_size):
+            # like Q Learning, get maximum Q value at s'
+            # But from target model
             if dones[i]:
                 q_value[i][actions[i]] = rewards[i]
             else:
-                a_max = np.argmax(tgt_q_value_next[i])
-                q_value[i][actions[i]] = rewards[i] + self.discount_factor * q_value_next[i][a_max]
-            
-        # q_update = rewards + self.discount_factor*(np.amax(tgt_q_value_next, axis=1))*(1-dones)
-        # ind = np.array([x for x in range(self.batch_size)])
-        # q_value[[ind], [actions]] = q_update
+                # the key point of Double DQN
+                # selection of action is from model
+                # update is from target model
+                a = np.argmax(q_value_next[i])
+                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (tgt_q_value_next[i][a])
 
-        self.model.fit(states, q_value, epochs=1, verbose=0)
-        
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
             self.epsilon -= self.epsilon_decay
         else :
             self.epsilon = self.epsilon_min
             
+        # make minibatch which includes target q value and predicted q value
+        # and do the model fit!
+        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
+        
     # get action from model using epsilon-greedy policy
     def get_action(self, state):
         # choose an action_arr epsilon greedily
@@ -234,7 +232,6 @@ def main():
             if agent.progress == "Training":
                 # Training!
                 agent.train_model()
-                # if done or ep_step % agent.target_update_cycle == 0:
                 if done or ep_step % agent.target_update_cycle == 0:
                     # return# copy q_net --> target_net
                     agent.Copy_Weights()

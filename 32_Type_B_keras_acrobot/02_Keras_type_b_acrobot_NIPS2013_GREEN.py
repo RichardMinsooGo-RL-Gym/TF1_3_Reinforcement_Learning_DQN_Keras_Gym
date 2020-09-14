@@ -1,5 +1,4 @@
 import random
-import pylab
 import numpy as np
 import time, datetime
 from collections import deque
@@ -96,31 +95,31 @@ class DQN:
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
-        states      = np.array([batch[0] for batch in minibatch])
-        actions     = np.array([batch[1] for batch in minibatch])
-        rewards     = np.array([batch[2] for batch in minibatch])
-        next_states = np.array([batch[3] for batch in minibatch])
-        dones       = np.array([batch[4] for batch in minibatch])
+        #Now we do the experience replay
+        states, actions, rewards, next_states, dones = zip(*minibatch)
+        states      = np.concatenate(states)
+        next_states = np.concatenate(next_states)
 
-        states = np.squeeze(states)
-        next_states = np.squeeze(next_states)
-
-        q_value          = self.model.predict_on_batch(states)
-        q_value_next     = self.model.predict_on_batch(next_states)
+        q_value      = self.model.predict(states)
+        q_value_next = self.model.predict(next_states)
         
-        q_update = rewards + self.discount_factor*(np.amax(q_value_next, axis=1))*(1-dones)
-        
-        ind = np.array([x for x in range(self.batch_size)])
-        q_value[[ind], [actions]] = q_update
-
-        self.model.fit(states, q_value, epochs=1, verbose=0)
-        
+        for i in range(self.batch_size):
+            # Q Learning: get maximum Q value at s' from target model
+            if dones[i]:
+                q_value[i][actions[i]] = rewards[i]
+            else:
+                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (np.amax(q_value_next[i]))
+                
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
             self.epsilon -= self.epsilon_decay
         else :
             self.epsilon = self.epsilon_min
             
+        # make minibatch which includes target q value and predicted q value
+        # and do the model fit!
+        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
+        
     # get action from model using epsilon-greedy policy
     def get_action(self, state):
         # choose an action_arr epsilon greedily

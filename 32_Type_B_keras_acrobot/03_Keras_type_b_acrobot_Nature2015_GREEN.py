@@ -1,5 +1,4 @@
 import random
-import pylab
 import numpy as np
 import time, datetime
 from collections import deque
@@ -100,31 +99,31 @@ class DQN:
         # sample a minibatch to train on
         minibatch = random.sample(self.memory, self.batch_size)
 
-        states      = np.array([batch[0] for batch in minibatch])
-        actions     = np.array([batch[1] for batch in minibatch])
-        rewards     = np.array([batch[2] for batch in minibatch])
-        next_states = np.array([batch[3] for batch in minibatch])
-        dones       = np.array([batch[4] for batch in minibatch])
+        #Now we do the experience replay
+        states, actions, rewards, next_states, dones = zip(*minibatch)
+        states      = np.concatenate(states)
+        next_states = np.concatenate(next_states)
 
-        states = np.squeeze(states)
-        next_states = np.squeeze(next_states)
-
-        q_value          = self.model.predict_on_batch(states)
-        tgt_q_value_next = self.target_model.predict_on_batch(next_states)
+        q_value      = self.model.predict(states)
+        tgt_q_value_next = self.target_model.predict(next_states)
         
-        q_update = rewards + self.discount_factor*(np.amax(tgt_q_value_next, axis=1))*(1-dones)
-        
-        ind = np.array([x for x in range(self.batch_size)])
-        q_value[[ind], [actions]] = q_update
-
-        self.model.fit(states, q_value, epochs=1, verbose=0)
-        
+        for i in range(self.batch_size):
+            # Q Learning: get maximum Q value at s' from target model
+            if dones[i]:
+                q_value[i][actions[i]] = rewards[i]
+            else:
+                q_value[i][actions[i]] = rewards[i] + self.discount_factor * (np.amax(tgt_q_value_next[i]))
+                
         # Decrease epsilon while training
         if self.epsilon > self.epsilon_min:
             self.epsilon -= self.epsilon_decay
         else :
             self.epsilon = self.epsilon_min
             
+        # make minibatch which includes target q value and predicted q value
+        # and do the model fit!
+        self.model.fit(states, q_value, batch_size=self.batch_size, epochs=1, verbose=0)
+        
     # get action from model using epsilon-greedy policy
     def get_action(self, state):
         # choose an action_arr epsilon greedily
@@ -241,14 +240,14 @@ def main():
                     episodes.append(agent.episode)
                     avg_score = np.mean(scores[-min(30, len(scores)):])
                 print('episode :{:>6,d}'.format(agent.episode),'/ ep step :{:>5,d}'.format(ep_step), \
-                      '/ time step :{:>8,d}'.format(agent.step),'/ status :', agent.progress, \
+                      '/ time step :{:>7,d}'.format(agent.step),'/ status :', agent.progress, \
                       '/ epsilon :{:>1.4f}'.format(agent.epsilon),'/ last 30 avg :{:> 4.1f}'.format(avg_score) )
                 break
     # Save model
     agent.save_model()
     
     pylab.plot(episodes, scores, 'b')
-    pylab.savefig("./save_graph/acrobot_NIPS2013.png")
+    pylab.savefig("./save_graph/acrobot_Nature2015.png")
 
     e = int(time.time() - start_time)
     print(' Elasped time :{:02d}:{:02d}:{:02d}'.format(e // 3600, (e % 3600 // 60), e % 60))
